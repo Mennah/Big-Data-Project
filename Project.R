@@ -7,7 +7,12 @@ library(NbClust)
 library(cluster)
 library(HSAUR)
 library(Boruta)
-
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(ROCR)
+library(e1071)
+library(xgboost)
 #clean environment 
 rm(list=ls())
 #set working directory
@@ -44,8 +49,15 @@ names (destinations)
 
 #Joining Destinations and Training Datasets
 dfm <- join(dfm, destinations, by = "srch_destination_id", type = "left", match = "all")
+write.csv(dfm, file = "dfm.csv")
 
-#============================================Part 2: Data Preparation=========================================#
+#============================================Part 2: Splitting Data===========================================#
+set.seed(3033)
+intrain  <- createDataPartition(dfm$hotel_cluster, p=0.7, list = FALSE)
+train <- dfm[intrain,]
+test  <- dfm[intrain,]
+dfm   <- train
+#============================================Part 3: Data Preparation=========================================#
 #Checking the presence of any NULLS in data
 lapply (dfm, function(dfm) sum (is.na(dfm)))
 
@@ -156,9 +168,57 @@ varImp(model)
 #pc2, pc4, pc9, pc6, pc7, pc8
 
 
+dataset <- subset (FinalVariables, select =  c(V1, PC2, PC4, PC6, PC7, PC8, PC9))
+dataset$hotel_cluster <- dfm$hotel_cluster                  
+
+#===================================================Part 4: Prediction===========================================#
+############RandomForest#############
+# Create the forest.
+#output.forest <- randomForest(dataset$hotel_cluster ~ dataset$PC2 + dataset$PC4 + dataset$PC9 + dataset$PC6 + dataset$PC7 + dataset$PC8,data = dataset)
+
+# View the forest results.
+#print(output.forest)
+
+###############SVM###################
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+set.seed(3233)
+
+svm_Linear <- train(dataset$hotel_cluster ~ dataset$PC2 , method = "svmLinear",
+                    trControl=trctrl,
+                    preProcess = c("center", "scale"),
+                    tuneLength = 10)
+
+test_pred <- predict(svm_Linear, newdata = testing)
+test_pred
+
+#############DecisionTree############
+
+#Build the tree to "fit" the model
+fit <- rpart(dataset$hotel_cluster ~ dataset$PC2,
+             method="class", 
+             data=dataset,
+             control=rpart.control(minsplit=2, maxdepth = 10),
+             parms=list(split='information'))
+#split='information' : means split on "information gain" 
+
+#plot the tree
+rpart.plot(fit, type = 4, extra = 1)
+
+summary(fit)
+
+#############################XGBoost###########################################
+bstSparse <- xgboost(data = dataset, label = dataset$hotel_cluster, max.depth = 2, eta = 1, nthread = 2, nround = 2, objective = "binary:logistic")
 
 
 
 
 
 
+
+
+
+
+
+
+                   
+                   
