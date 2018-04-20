@@ -13,6 +13,7 @@ library(rpart.plot)
 library(ROCR)
 library(e1071)
 library(xgboost)
+library(BBmisc)
 #clean environment 
 rm(list=ls())
 #set working directory
@@ -51,13 +52,7 @@ names (destinations)
 dfm <- join(dfm, destinations, by = "srch_destination_id", type = "left", match = "all")
 write.csv(dfm, file = "dfm.csv")
 
-#============================================Part 2: Splitting Data===========================================#
-set.seed(3033)
-intrain  <- createDataPartition(dfm$hotel_cluster, p=0.7, list = FALSE)
-train <- dfm[intrain,]
-test  <- dfm[intrain,]
-dfm   <- train
-#============================================Part 3: Data Preparation=========================================#
+#============================================Part 2: Data Preparation=========================================#
 #Checking the presence of any NULLS in data
 lapply (dfm, function(dfm) sum (is.na(dfm)))
 
@@ -131,14 +126,6 @@ dfm<-dfm[!(dfm$LengthOfStay < 0),]
 drops <- c("date_time","Date", "srch_ci", "srch_co", "CheckInDate", "CheckOutDate")
 dfm <- dfm[ , !(names(dfm) %in% drops)]
 
-#Checking the correlation between the dependent variable and all other variables except those not present in test data
-#IndependentVar <- c ("user_id" ,"site_name", "posa_continent", "user_location_country", "user_location_region", "user_location_city",       
-#                     "orig_destination_distance","is_mobile" ,"is_package", "channel",                  
-#                     "srch_adults_cnt", "srch_children_cnt","srch_rm_cnt", "srch_destination_id", "srch_destination_type_id", 
-#                     "hotel_continent", "hotel_country", "hotel_market", "PC1","PC2", "PC3", "Year", 
-#                     "Month", "Day", "CheckInYear", "CheckInMonth", "CheckInDay",               
-#                     "CheckOutYear","CheckOutMonth","CheckOutDay", "LengthOfStay" )
-
 #selecting independent variables
 IndependentVar <-subset (dfm, select =  c(user_id, site_name, posa_continent, user_location_country, user_location_region, user_location_city,       
                                          orig_destination_distance,is_mobile ,is_package, channel,                  
@@ -147,9 +134,12 @@ IndependentVar <-subset (dfm, select =  c(user_id, site_name, posa_continent, us
                                          Month,Day, CheckInYear, CheckInMonth, CheckInDay,               
                                          CheckOutYear,CheckOutMonth,CheckOutDay, LengthOfStay))
 
+#Normalizing Categorical variables
 IndependentVar <- lapply (IndependentVar, as.numeric)
-lapply (IndependentVar, class)
+IndependentVar <- lapply (IndependentVar, function (IndependentVar) normalize(IndependentVar, method = "standardize", range = c(0, 1), margin = 1L, on.constant = "quiet"))
+
 IndependentVar <- as.data.frame(IndependentVar)
+
 #applying PCA on them to reduce dimensionality
 IndepVar <- prcomp(x = IndependentVar, scale. = TRUE)
 screeplot(IndepVar)
@@ -171,7 +161,20 @@ varImp(model)
 dataset <- subset (FinalVariables, select =  c(V1, PC2, PC4, PC6, PC7, PC8, PC9))
 dataset$hotel_cluster <- dfm$hotel_cluster                  
 
-#===================================================Part 4: Prediction===========================================#
+#============================================Part 3: Splitting Data===========================================#
+set.seed(3033)
+intrain  <- createDataPartition(dataset$hotel_cluster, p=0.7, list = FALSE)
+train <- dataset[intrain,]
+test  <- dataset[intrain,]
+dfm   <- train
+
+#============================================Part 4: Prediction===========================================#
+############Logistic Regression#########
+
+
+
+
+
 ############RandomForest#############
 # Create the forest.
 #output.forest <- randomForest(dataset$hotel_cluster ~ dataset$PC2 + dataset$PC4 + dataset$PC9 + dataset$PC6 + dataset$PC7 + dataset$PC8,data = dataset)
