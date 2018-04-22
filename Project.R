@@ -14,6 +14,10 @@ library(ROCR)
 library(e1071)
 library(xgboost)
 library(BBmisc)
+library(klaR)
+library(FactoMineR)
+library(reshape2)
+library (nnet)
 #clean environment 
 rm(list=ls())
 #set working directory
@@ -23,12 +27,6 @@ setwd("E:/BigData")
 #Read Training and Destinations Datasets
 dfm <- read.csv("E:/BigData/train/train_sample.csv")
 dest <- read.csv("E:/BigData/destinations/destinations.csv")
-
-#Analyzing Datasets
-nrow (dfm)
-factor (dfm$hotel_cluster)
-hist(dfm$hotel_cluster)
-head (dfm)
 
 #Getting principle component analysis to choose the most important columns from Destinations Dataset
 dest2 <- prcomp(x = dest, scale = TRUE)
@@ -50,9 +48,10 @@ names (destinations)
 
 #Joining Destinations and Training Datasets
 dfm <- join(dfm, destinations, by = "srch_destination_id", type = "left", match = "all")
-write.csv(dfm, file = "dfm.csv")
-
 #============================================Part 2: Data Preparation=========================================#
+#Since test data contains only booking events then we will remove those booking = false
+dfm <- dfm[!(dfm$is_booking %in% c(0)),]
+
 #Checking the presence of any NULLS in data
 lapply (dfm, function(dfm) sum (is.na(dfm)))
 
@@ -107,12 +106,13 @@ m3 <- mean (WithoutNA3)
 dfm$PC3 <- ifelse(is.na(dfm$PC3), m3, dfm$PC3)
 sum (is.na(dfm$PC3))
 
-#sub <- c ("site_name", "posa_continent", "is_mobile", "is_package", "is_booking", "channel", "hotel_continent", "hotel_country")
-#dfm[sub]  <- lapply (dfm[sub],  factor)
-#sub2 <- c ("hotel_market", "hotel_cluster", "Year", "Month", "Day", "CheckInMonth", "CheckInDay", 
-#           "CheckOutMonth", "CheckOutDay")
-#dfm[sub2] <- lapply (dfm[sub2], factor)
-#sapply (dfm , class)
+#dfm <- as.data.frame(dfm)
+
+sub <- c ("site_name" ,"posa_continent", "is_mobile", "is_package", "is_booking", "channel", "hotel_continent",
+          "hotel_cluster", "Year", "Month", "Day", "CheckInMonth", "CheckInDay", 
+          "CheckOutMonth", "CheckOutDay")
+dfm[sub]  <- lapply (dfm[sub],  factor)
+
 
 #negative values??
 x <- factor (dfm$LengthOfStay)
@@ -126,49 +126,65 @@ dfm<-dfm[!(dfm$LengthOfStay < 0),]
 drops <- c("date_time","Date", "srch_ci", "srch_co", "CheckInDate", "CheckOutDate")
 dfm <- dfm[ , !(names(dfm) %in% drops)]
 
+#Clustering
+#first use a dataframe without the predicted variable
+clustDFM <- subset(dfm, select = -c(hotel_cluster, is_booking, cnt, user_id))
+wdiff <- (nrow(clustDFM)-1)*sum(apply(clustDFM,2,var))
+for (i in 5:30) wdiff[i] <- sum(kmodes(clustDFM,i, iter.max = 5)$withindiff)
+plot(1:30, wdiff, type="b", xlab="Number of Clusters", ylab="Within groups sum of squares")
+
+#then best number of clusters -> 13
+clust <- kmodes(clustDFM,13, iter.max = 10)
+dfm$cluster <- clust$cluster
+
 #selecting independent variables
-IndependentVar <-subset (dfm, select =  c(user_id, site_name, posa_continent, user_location_country, user_location_region, user_location_city,       
-                                         orig_destination_distance,is_mobile ,is_package, channel,                  
-                                         srch_adults_cnt, srch_children_cnt,srch_rm_cnt, srch_destination_id, srch_destination_type_id, 
-                                         hotel_continent, hotel_country, hotel_market,PC1,PC2, PC3, Year, 
-                                         Month,Day, CheckInYear, CheckInMonth, CheckInDay,               
-                                         CheckOutYear,CheckOutMonth,CheckOutDay, LengthOfStay))
+NumericVar <-subset (dfm, select =  c(site_name, user_location_country, user_location_region, user_location_city,       
+                                         orig_destination_distance, srch_adults_cnt, srch_children_cnt,srch_rm_cnt, 
+                                         srch_destination_id, srch_destination_type_id, 
+                                         hotel_country, hotel_market,PC1,PC2, PC3,LengthOfStay))
 
-#Normalizing Categorical variables
-IndependentVar <- lapply (IndependentVar, as.numeric)
-IndependentVar <- lapply (IndependentVar, function (IndependentVar) normalize(IndependentVar, method = "standardize", range = c(0, 1), margin = 1L, on.constant = "quiet"))
+CatVar <- subset (dfm, select = c(posa_continent, is_mobile, is_package, channel, hotel_continent,
+                                      Year, Month, Day, CheckInMonth, CheckInDay, CheckOutMonth, CheckOutDay))
 
-IndependentVar <- as.data.frame(IndependentVar)
+#Normalizing variables
+NumericVar <- lapply (NumericVar, as.numeric)
+#NumericVar <- lapply (NumericVar, function (NumericVar) normalize(NumericVar, method = "standardize", range = c(0, 1), margin = 1L, on.constant = "quiet"))
+NumericVar <- as.data.frame(NumericVar)
 
 #applying PCA on them to reduce dimensionality
-IndepVar <- prcomp(x = IndependentVar, scale. = TRUE)
-screeplot(IndepVar)
+FinalNumeric <- prcomp(x = NumericVar, scale. = TRUE)
+screeplot(FinalNumeric)
 
 #Choosing The first three columns as representatives of the Destinations Dataset
-FinalVariables<-cbind(IndependentVar$user_id,IndepVar$x[,1:10])
+Numericdata<-cbind(dfm$user_id,FinalNumeric$x[,1:3])
+Numericdata <- as.data.frame(Numericdata)
 
-#Changing type of Destinations matrix to Dataframe
-FinalVariables <- as.data.frame(FinalVariables)
-
-dfm$hotel_cluster <- as.factor(dfm$hotel_cluster)
-
-#Measure Variables Importance
-model <- glm(formula = dfm$hotel_cluster ~ ., family = "binomial", data = FinalVariables)
-varImp(model)
-#pc2, pc4, pc9, pc6, pc7, pc8
+dataset <- CatVar
+dataset$PC1 <- Numericdata$PC1
+dataset$PC2 <- Numericdata$PC2
+dataset$PC3 <- Numericdata$PC3
 
 
-dataset <- subset (FinalVariables, select =  c(V1, PC2, PC4, PC6, PC7, PC8, PC9))
-dataset$hotel_cluster <- dfm$hotel_cluster                  
+dataset$hotel_cluster <- dfm$cluster
 
-#============================================Part 3: Splitting Data===========================================#
+dataset <- as.data.frame(dataset)
+
+#============================================Part 3: Feature Selection =======================================#
+#boruta
+boruta_output <- Boruta(dataset$hotel_cluster ~ ., data= dataset , doTrace=2)
+boruta_signif <- names(boruta_output$finalDecision[boruta_output$finalDecision %in% c("Confirmed", "Tentative")])
+plot(boruta_output, cex.axis=.7, las=2, xlab="", main="Variable Importance")  # plot variable importance
+
+data <- subset (dataset, select =  c(posa_continent, is_mobile, is_package, channel, hotel_continent,
+                                     Year, Month, Day, CheckInMonth, CheckInDay, CheckOutMonth,
+                                     CheckOutDay, PC1, PC2, PC3, hotel_cluster))
+ 
+#============================================Part 4: Splitting Data===========================================#
 set.seed(3033)
-intrain  <- createDataPartition(dataset$hotel_cluster, p=0.7, list = FALSE)
+intrain  <- createDataPartition(data$hotel_cluster, p=0.7, list = FALSE)
 train <- dataset[intrain,]
 test  <- dataset[intrain,]
-dfm   <- train
-
-#============================================Part 4: Prediction===========================================#
+#============================================Part 5: Prediction===============================================#
 ############Logistic Regression#########
 
 
