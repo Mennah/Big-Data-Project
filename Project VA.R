@@ -18,16 +18,16 @@ library(klaR)
 library(FactoMineR)
 library(reshape2)
 library (nnet)
-library (gbm)
+library(forecast)
 #clean environment 
 rm(list=ls())
 #set working directory
-setwd("E:/BigData")
+setwd("D:/El Gam3a/Year Four/Second Term/BigData/Project/New/BigData")
 #============================================Part 1: Reading and Merging Datasets=========================================#
 
 #Read Training and Destinations Datasets
-dfm <- read.csv("E:/BigData/train/train_sample.csv")
-dest <- read.csv("E:/BigData/destinations/destinations.csv")
+dfm <- read.csv("D:/El Gam3a/Year Four/Second Term/BigData/Project/New/BigData/train/train_sample.csv")
+dest <- read.csv("D:/El Gam3a/Year Four/Second Term/BigData/Project/New/BigData/destinations/destinations.csv")
 
 #Getting principle component analysis to choose the most important columns from Destinations Dataset
 dest2 <- prcomp(x = dest, scale = TRUE)
@@ -130,9 +130,9 @@ dfm <- dfm[ , !(names(dfm) %in% drops)]
 #Clustering
 #first use a dataframe without the predicted variable
 clustDFM <- subset(dfm, select = -c(hotel_cluster, is_booking, cnt, user_id))
-wdiff <- (nrow(clustDFM)-1)*sum(apply(clustDFM,2,var))
-for (i in 5:30) wdiff[i] <- sum(kmodes(clustDFM,i, iter.max = 5)$withindiff)
-plot(1:30, wdiff, type="b", xlab="Number of Clusters", ylab="Within groups sum of squares")
+#wdiff <- (nrow(clustDFM)-1)*sum(apply(clustDFM,2,var))
+#for (i in 5:30) wdiff[i] <- sum(kmodes(clustDFM,i, iter.max = 5)$withindiff)
+#plot(1:30, wdiff, type="b", xlab="Number of Clusters", ylab="Within groups sum of squares")
 
 #then best number of clusters -> 13
 clust <- kmodes(clustDFM,13, iter.max = 10)
@@ -167,86 +167,125 @@ dataset$PC3 <- Numericdata$PC3
 
 
 hotel_cluster <- dfm$cluster
-
 dataset <- as.data.frame(dataset)
-dataset <- cbind (CatVar, NumericVar)
+
 #============================================Part 3: Feature Selection =======================================#
 #boruta
-boruta_output <- Boruta(dataset$hotel_cluster ~ ., data= dataset , doTrace=2, pValue = 0.00000001)
-boruta_signif <- names(boruta_output$finalDecision[boruta_output$finalDecision %in% c("Confirmed", "Tentative")])
-plot(boruta_output, cex.axis=.7, las=2, xlab="", main="Variable Importance")  # plot variable importance
+#boruta_output <- Boruta(dataset$hotel_cluster ~ ., data= dataset , doTrace=2, pValue = 0.00000001)
+#boruta_signif <- names(boruta_output$finalDecision[boruta_output$finalDecision %in% c("Confirmed", "Tentative")])
+#plot(boruta_output, cex.axis=.7, las=2, xlab="", main="Variable Importance")  # plot variable importance
 
-
-#gradient boost
-myboost=gbm(hotel_cluster ~ . ,data = dataset ,distribution = "gaussian",n.trees = 5000,
-                 shrinkage = 0.01, interaction.depth = 4)
-
-
-summary(myboost) #Summary gives a table of Variable Importance and a plot of Variable Importance
-
-data <- subset (dataset, select =  c(posa_continent, is_mobile, is_package, channel, hotel_continent,
+mydata <- subset (dataset, select =  c(posa_continent, is_mobile, is_package, channel, hotel_continent,
                                      Year, Month, Day, CheckInMonth, CheckInDay, CheckOutMonth,
                                      CheckOutDay, PC1, PC2, PC3, hotel_cluster))
- 
 #============================================Part 4: Splitting Data===========================================#
 set.seed(3033)
-intrain  <- createDataPartition(data$hotel_cluster, p=0.7, list = FALSE)
-train <- dataset[intrain,]
-test  <- dataset[intrain,]
+intrain  <- createDataPartition(mydata$hotel_cluster, p=0.7, list = FALSE)
+train <- mydata[intrain,]
+test  <- mydata[-intrain,]
+
+mydata <- subset(mydata, select = -c(hotel_cluster))
 #============================================Part 5: Prediction===============================================#
-############Logistic Regression#########
 
+#-----------------------------------------------Naive Bayes-----------------------------------------------#
 
+# train a naive bayes model
+model <- naiveBayes(hotel_cluster ~ train$posa_continent
+                                        + train$is_mobile
+                                        + train$is_package
+                                        + train$channel
+                                        + train$hotel_continent
+                                        + train$Year
+                                        + train$Month
+                                        + train$Day
+                                        + train$CheckInMonth
+                                        + train$CheckInDay
+                                        + train$CheckOutMonth
+                                        + train$CheckOutDay
+                                        + train$PC1
+                                        + train$PC2
+                                        + train$PC3, data=train)
+# make predictions
+predictions <- predict(model, test)
+# summarize results
+#mat <- confusionMatrix(predictions, test$hotel_cluster)
+#print(mat)
 
+tab <- table(predictions, test$hotel_cluster)
+acc1 <- sum(diag(tab))/sum(tab)
+print(acc1)
+#----------------------------------------------DecisionTree-----------------------------------------------#
 
+#Build the tree to "fit" the model
+model <- rpart(train$hotel_cluster ~ train$posa_continent
+                                    + train$is_mobile
+                                    + train$is_package
+                                    + train$channel
+                                    + train$hotel_continent
+                                    + train$Year
+                                    + train$Month
+                                    + train$Day
+                                    + train$CheckInMonth
+                                    + train$CheckInDay
+                                    + train$CheckOutMonth
+                                    + train$CheckOutDay
+                                    + train$PC1
+                                    + train$PC2
+                                    + train$PC3, data=train, method="class")
+# make predictions
+predictions <- predict(model, test)
+# summarize results
+tab <- table(predictions, test$hotel_cluster)
+acc2 <- sum(diag(tab))/sum(tab)
 
-############RandomForest#############
-# Create the forest.
-#output.forest <- randomForest(dataset$hotel_cluster ~ dataset$PC2 + dataset$PC4 + dataset$PC9 + dataset$PC6 + dataset$PC7 + dataset$PC8,data = dataset)
+#-------------------------------------------Logistic Regression-------------------------------------------#
 
-# View the forest results.
-#print(output.forest)
+model <- multinom(train$hotel_cluster ~ train$PC2 + train$PC4 + train$PC6 + train$PC7 + train$PC8 + train$PC9, data = train)
+# make predictions
+predictions <- predict(model, test)
+# summarize results
+tab <- table(predictions, test$hotel_cluster)
+acc3 <- sum(diag(tab))/sum(tab)
 
-###############SVM###################
-trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+#----------------------------------------------Random Forest----------------------------------------------#
+
+model <- randomForest(train$hotel_cluster ~ train$PC2 + train$PC4 + train$PC6 + train$PC7 + train$PC8 + train$PC9,data = train)
+# make predictions
+predictions <- predict(model, test)
+# summarize results
+tab <- table(predictions, test$hotel_cluster)
+acc4 <- sum(diag(tab))/sum(tab)
+
+#------------------------------------------------XGBoost--------------------------------------------------#
+label <- as.numeric(train$hotel_cluster)
+data <-  as.matrix(train)
+
+model <- xgboost(data = data, label = label, nround = 2, objective = "binary:logistic")
+# make predictions
+predictions <- predict(model, test)
+# summarize results
+tab <- table(predictions, test$hotel_cluster)
+acc5 <- sum(diag(tab))/sum(tab)
+
+#--------------------------------------------------SVM----------------------------------------------------#
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 2)
 set.seed(3233)
-
-svm_Linear <- train(dataset$hotel_cluster ~ dataset$PC2 , method = "svmLinear",
+svm_Linear <- train(train$hotel_cluster ~ train$PC2 + train$PC4 + train$PC6 + train$PC7 + train$PC8 + train$PC9, method = "svmLinear",
                     trControl=trctrl,
                     preProcess = c("center", "scale"),
                     tuneLength = 10)
 
-test_pred <- predict(svm_Linear, newdata = testing)
-test_pred
+# make predictions
+predictions <- predict(model, test)
+# summarize results
+tab <- table(predictions, test$hotel_cluster)
+acc6 <- sum(diag(tab))/sum(tab)
 
-#############DecisionTree############
 
-#Build the tree to "fit" the model
-fit <- rpart(dataset$hotel_cluster ~ dataset$PC2,
-             method="class", 
-             data=dataset,
-             control=rpart.control(minsplit=2, maxdepth = 10),
-             parms=list(split='information'))
-#split='information' : means split on "information gain" 
-
-#plot the tree
-rpart.plot(fit, type = 4, extra = 1)
-
-summary(fit)
-
-#############################XGBoost###########################################
-bstSparse <- xgboost(data = dataset, label = dataset$hotel_cluster, max.depth = 2, eta = 1, nthread = 2, nround = 2, objective = "binary:logistic")
+#Another method to get accuracy
+#tab <- table(predictions, test$hotel_cluster)
+#sum(diag(tab))/sum(tab)
 
 
 
 
-
-
-
-
-
-
-
-
-                   
-                   
